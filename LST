@@ -1,0 +1,174 @@
+var getmin= function(image)
+{
+  var min = ee.Number(image.reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: am,
+  maxPixels: 1e9,
+  scale: 30
+  }).values())
+  return (min, image.bandNames() ) ;
+}
+
+
+
+
+var filtered1 = imageCollection.filterDate('2016-02-01', '2016-02-28')
+.filterBounds(am)
+.filter(ee.Filter.lt('CLOUD_COVER', 5))
+//Map.addLayer(filtered1);
+
+// Load a raw Landsat scene and display it.
+var raw1 = ee.Image('LANDSAT/LC08/C01/T1/LC08_148044_20160213')
+var raw = ee.Image('LANDSAT/LC08/C01/T1/LC08_149044_20160204')
+          .clip(am);
+Map.centerObject(am, 10);
+//Map.addLayer(raw, {bands: ['B4', 'B3', 'B2'], min: 6000, max: 12000}, 'raw');
+//Map.addLayer(raw1, {bands: ['B4', 'B3', 'B2'], min: 6000, max: 12000}, 'raw1');
+
+// Convert the raw data to radiance.
+var radiance = ee.Algorithms.Landsat.calibratedRadiance(raw);
+print (getmin(radiance));
+//Map.addLayer(radiance, {bands: ['B4', 'B3', 'B2'], max: 90}, 'radiance');
+
+
+var toa = ee.Algorithms.Landsat.TOA(raw);
+
+var ndvi = raw.normalizedDifference(['B5', 'B4']).rename('NDVI');
+var ndviParams = {min: -1, max: 1, palette: ['blue', 'white', 'green']};
+//print(ndvi,'ndvi');
+Map.addLayer(ndvi, ndviParams, 'ndvi');
+
+var thermal= radiance.select('B10');
+
+
+var b10Params = {min: 8.668554306030273, max: 10.755298614501953, palette: ['blue', 'white', 'green']};
+Map.addLayer(thermal, b10Params, 'thermal');
+
+
+// find the min and max of NDVI
+
+{
+var ndvimin = ee.Number(ndvi.reduceRegion({
+    reducer: ee.Reducer.min(),
+  geometry: am,
+  scale: 30
+  }).values().get(0));
+print(ndvimin, 'ndvimin')
+
+var ndvimax = ee.Number(ndvi.reduceRegion({
+    reducer: ee.Reducer.max(),
+  geometry: am,
+  scale: 30
+  }).values().get(0));
+print(ndvimax, 'ndvimax')
+}
+
+
+{
+var pv = ndvi.expression(
+  '(NDVI-min/max-min)**2', 
+  {
+    'NDVI': ndvi.select('NDVI'),
+    'min': ndvimin,
+    'max': ndvimax
+  });
+
+//print(fv, 'fv');
+Map.addLayer(pv);
+{
+var PVmin = ee.Number(pv.reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(PVmin, 'PVmin');
+var PVmax = ee.Number(pv.reduceRegion({
+    reducer: ee.Reducer.max(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(PVmax, 'PVmax')
+}
+}
+
+  
+//Emissivity
+var a= ee.Number(0.004);
+var b= ee.Number(0.986);
+var EM=pv.expression(
+  '(0.004*fv)+0.986',{
+    'fv': pv
+  }
+  );
+{
+var EMmin = ee.Number(EM.reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(EMmin, 'EMmin');
+var EMmax = ee.Number(EM.reduceRegion({
+    reducer: ee.Reducer.max(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(EMmax, 'EMmax')
+}
+
+var imageVisParam2 = {min: 0, max: 1, palette: ['blue', 'white', 'green']};
+Map.addLayer(EM,imageVisParam2 ,'EMM');
+
+var bt =thermal.expression( 
+  '(1321.0789/(log((e*774.8853/thermal)+1)))-273.15',
+  {
+    'thermal': radiance.select('B10'),
+    'e': EM
+  })
+
+{
+var min = ee.Number(bt.reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(min, 'btmin');
+var max = ee.Number(bt.reduceRegion({
+    reducer: ee.Reducer.max(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(max, 'btmax')
+}
+ 
+var LST = thermal.expression(
+    '(Tb/(1 + (11.5* (Tb / 14380))*log(Ep)))', {
+      'Tb': bt,
+      'Ep': EM
+});
+
+
+
+{
+var min = ee.Number(LST.reduceRegion({
+  reducer: ee.Reducer.min(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(min, 'LSTmin');
+var max = ee.Number(LST.reduceRegion({
+    reducer: ee.Reducer.max(),
+  geometry: am,
+  scale: 30,
+  maxPixels: 1e9
+  }).values().get(0));
+print(max, 'LSTmax')
+}
+
+Map.addLayer(LST, {min: 15, max: 32, palette: ['white', 'red']},'LST');
